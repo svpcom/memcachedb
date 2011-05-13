@@ -1,6 +1,7 @@
 /* -*- Mode: C; tab-width: 4; c-basic-offset: 4; indent-tabs-mode: nil -*- */
 /*
  *  Copyright 2008 Steve Chu.  All rights reserved.
+ *  Copyrignt 2011 Vasiliy Evseenko
  *
  *  Use and distribution licensed under the BSD license.  See
  *  the LICENSE file for full text.
@@ -68,7 +69,7 @@ void bdb_settings_init(void)
     bdb_settings.rep_master_eid = DB_EID_INVALID;
     bdb_settings.rep_start_policy = DB_REP_ELECTION;
     bdb_settings.rep_nsites = 2;
-    bdb_settings.rep_ack_policy = DB_REPMGR_ACKS_ONE_PEER;
+    bdb_settings.rep_ack_policy =  DB_REPMGR_ACKS_NONE; // DB_REPMGR_ACKS_ONE_PEER;
 
     bdb_settings.rep_ack_timeout = 50 * 1000;  /* 50ms */
     bdb_settings.rep_chkpoint_delay = 0;
@@ -425,7 +426,8 @@ static void bdb_event_callback(DB_ENV *env, u_int32_t which, void *info)
 {
     switch (which) {
     case DB_EVENT_PANIC:
-        env->errx(env, "evnet: DB_EVENT_PANIC, we got panic, recovery should be run.");
+        env->errx(env, "evnet: DB_EVENT_PANIC, we got panic, recovery should be run. Terminating");
+        exit(1);
         break;
     case DB_EVENT_REP_CLIENT:
         env->errx(env, "event: DB_EVENT_REP_CLIENT, I<%s:%d> am now a replication client.", 

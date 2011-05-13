@@ -1380,6 +1380,10 @@ static void process_rep_command(conn *c, token_t *tokens, const size_t ntokens) 
             return;
 
         } else if (ntokens == 3 && strcmp(tokens[COMMAND_TOKEN].value, "rep_set_ack_policy") == 0){
+	    out_string(c, "CLIENT_ERROR temporary disabled, hardcoded to DB_REPMGR_ACKS_NONE");
+	    return;
+
+	    /*
             int ack_policy;
             ack_policy = strtoul(tokens[1].value, NULL, 10);
             if(errno == ERANGE || ack_policy <= 0) {
@@ -1393,6 +1397,7 @@ static void process_rep_command(conn *c, token_t *tokens, const size_t ntokens) 
             }
             out_string(c, "OK");
             return;
+	    */
 
         }else {
             out_string(c, "ERROR");
@@ -2636,6 +2641,7 @@ int main (int argc, char **argv) {
                 exit(EXIT_FAILURE);
             }else{
                bdb_settings.rep_start_policy = DB_REP_CLIENT;
+	       bdb_settings.rep_priority = 0;
             }
             break;
         case 'R':
