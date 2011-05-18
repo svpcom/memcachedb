@@ -205,11 +205,12 @@ static int add_msghdr(conn *c)
 static conn **freeconns;
 static int freetotal;
 static int freecurr;
-
+static int curr_conns;
 
 static void conn_init(void) {
     freetotal = 200;
     freecurr = 0;
+    curr_conns = 0;
     if ((freeconns = (conn **)malloc(sizeof(conn *) * freetotal)) == NULL) {
         fprintf(stderr, "malloc()\n");
     }
@@ -251,6 +252,30 @@ bool do_conn_add_to_freelist(conn *c) {
         }
     }
     return true;
+}
+
+void do_conn_inc_conns()
+{
+    if (++curr_conns >= settings.maxconns)
+    {
+	if (settings.verbose > 0)
+	    fprintf(stderr, "Connections limit reached, disabling accept\n");
+	
+	accept_new_conns(false);
+    }
+}
+
+void do_conn_dec_conns()
+{
+    assert(curr_conns > 0);
+
+    if (--curr_conns < settings.maxconns)
+    {
+	if (settings.verbose > 0 && curr_conns == (settings.maxconns - 1))
+	    fprintf(stderr, "Enabling accept\n");
+
+	accept_new_conns(true);
+    }
 }
 
 conn *conn_new(const int sfd, const int init_state, const int event_flags,
@@ -391,7 +416,7 @@ static void conn_close(conn *c) {
         fprintf(stderr, "<%d connection closed.\n", c->sfd);
 
     close(c->sfd);
-    accept_new_conns(true);
+    conn_dec_conns();
     conn_cleanup(c);
 
     /* if the connection has big buffers, just free it */
@@ -1812,23 +1837,26 @@ static void drive_machine(conn *c) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
                     /* these are transient, so don't log anything */
                     stop = true;
-                } else if (errno == EMFILE) {
+                } else if (errno == EMFILE || errno == ENFILE) {
                     if (settings.verbose > 0)
-                        fprintf(stderr, "Too many open connections\n");
-                    accept_new_conns(false);
-                    stop = true;
-                } else {
+                        fprintf(stderr, "Too many open fds, aborting\n");
+		    abort();
+		} else {
                     perror("accept()");
                     stop = true;
                 }
                 break;
             }
+
+
             if ((flags = fcntl(sfd, F_GETFL, 0)) < 0 ||
                 fcntl(sfd, F_SETFL, flags | O_NONBLOCK) < 0) {
                 perror("setting O_NONBLOCK");
                 close(sfd);
                 break;
             }
+
+	    conn_inc_conns();
             dispatch_conn_new(sfd, conn_read, EV_READ | EV_PERSIST,
                                      DATA_BUFFER_SIZE, false);
             break;
@@ -1999,6 +2027,7 @@ static void drive_machine(conn *c) {
                 conn_cleanup(c);
             else
                 conn_close(c);
+	    
             stop = true;
             break;
         }
@@ -2706,10 +2735,10 @@ int main (int argc, char **argv) {
         fprintf(stderr, "failed to getrlimit number of files\n");
         exit(EXIT_FAILURE);
     } else {
-        int maxfiles = settings.maxconns;
-        if (rlim.rlim_cur < maxfiles)
-            rlim.rlim_cur = maxfiles + 3;
-        if (rlim.rlim_max < rlim.rlim_cur)
+        int maxfiles = settings.maxconns + 1024; // for internal bdb use
+        if (rlim.rlim_cur < maxfiles)   // soft limit
+            rlim.rlim_cur = maxfiles;
+        if (rlim.rlim_max < rlim.rlim_cur)  // hard limit
             rlim.rlim_max = rlim.rlim_cur;
         if (setrlimit(RLIMIT_NOFILE, &rlim) != 0) {
             fprintf(stderr, "failed to set rlimit for open files. Try running as root or requesting smaller maxconns value.\n");

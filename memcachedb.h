@@ -323,6 +323,8 @@ int item_put(char *key, size_t nkey, item *it);
 int item_delete(char *key, size_t nkey);
 int item_exists(char *key, size_t nkey);
 item *item_cget(DBC *cursorp, char *start, size_t nstart, u_int32_t flags);
+void  do_conn_inc_conns();
+void  do_conn_dec_conns();
 
 /* bdb related stats */
 void stats_bdb(char *temp);
@@ -368,7 +370,11 @@ int mt_item_add_to_freelist(item *it);
 void  mt_stats_lock(void);
 void  mt_stats_unlock(void);
 int   mt_store_item(item *item, int comm);
+void   mt_conn_inc_conns();
+void   mt_conn_dec_conns();
 
+# define conn_inc_conns()            mt_conn_inc_conns()
+# define conn_dec_conns()            mt_conn_dec_conns()
 # define add_delta(x,y,z,a,b)        mt_add_delta(x,y,z,a,b)
 # define conn_from_freelist()        mt_conn_from_freelist()
 # define conn_add_to_freelist(x)     mt_conn_add_to_freelist(x)
@@ -382,6 +388,8 @@ int   mt_store_item(item *item, int comm);
 
 #else /* !USE_THREADS */
 
+# define conn_inc_conns()             do_conn_inc_conns()
+# define conn_dec_conns()             do_conn_dec_conns()
 # define add_delta(x,y,z,a,b)         do_add_delta(x,y,z,a,b)
 # define conn_from_freelist()         do_conn_from_freelist()
 # define conn_add_to_freelist(x)      do_conn_add_to_freelist(x)
