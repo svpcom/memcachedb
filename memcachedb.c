@@ -205,11 +205,12 @@ static int add_msghdr(conn *c)
 static conn **freeconns;
 static int freetotal;
 static int freecurr;
-
+static int curr_conns;
 
 static void conn_init(void) {
     freetotal = 200;
     freecurr = 0;
+    curr_conns = 0;
     if ((freeconns = (conn **)malloc(sizeof(conn *) * freetotal)) == NULL) {
         fprintf(stderr, "malloc()\n");
     }
@@ -251,6 +252,51 @@ bool do_conn_add_to_freelist(conn *c) {
         }
     }
     return true;
+}
+
+bool do_conn_inc_conns()
+{
+    if (curr_conns >= settings.maxconns)
+    {
+	//overflow -- should not be happen
+	if (settings.verbose > 0)
+	    fprintf(stderr, "Connections limit reached %d/%d, dropping conn\n", curr_conns, settings.maxconns);
+
+	//if accept is not disabled yet
+	accept_new_conns(false);
+	return true;
+    }
+    
+
+    curr_conns += 1;
+
+    if (curr_conns >= settings.maxconns)
+    {
+	if (settings.verbose > 0)
+	    fprintf(stderr, "Connections limit reached %d/%d, disabling accept\n", curr_conns, settings.maxconns);
+	
+	accept_new_conns(false);
+    }
+
+    return false;
+}
+
+void do_conn_dec_conns()
+{
+    assert(curr_conns > 0);
+
+    curr_conns -= 1;
+    
+    if (curr_conns == (settings.maxconns - 1) && settings.verbose > 0)
+    {
+	    fprintf(stderr, "Enabling accept %d/%d\n", curr_conns, settings.maxconns);
+
+    }
+
+    // FIXME: accept_new_conns work ONLY from main thread
+    //        so we need to call it EVERY time to avoid deadlock with disabled accept on socket
+    accept_new_conns(true);
+    
 }
 
 conn *conn_new(const int sfd, const int init_state, const int event_flags,
@@ -391,7 +437,7 @@ static void conn_close(conn *c) {
         fprintf(stderr, "<%d connection closed.\n", c->sfd);
 
     close(c->sfd);
-    accept_new_conns(true);
+    conn_dec_conns();
     conn_cleanup(c);
 
     /* if the connection has big buffers, just free it */
@@ -1708,7 +1754,9 @@ void accept_new_conns(const bool do_accept) {
     conn *next;
 
     if (! is_listen_thread())
+    {
         return;
+    }
 
     for (next = listen_conn; next; next = next->next) {
         if (do_accept) {
@@ -1804,7 +1852,6 @@ static void drive_machine(conn *c) {
     assert(c != NULL);
 
     while (!stop) {
-
         switch(c->state) {
         case conn_listening:
             addrlen = sizeof(addr);
@@ -1812,25 +1859,35 @@ static void drive_machine(conn *c) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
                     /* these are transient, so don't log anything */
                     stop = true;
-                } else if (errno == EMFILE) {
+                } else if (errno == EMFILE || errno == ENFILE) {
                     if (settings.verbose > 0)
-                        fprintf(stderr, "Too many open connections\n");
-                    accept_new_conns(false);
-                    stop = true;
-                } else {
+                        fprintf(stderr, "Too many open fds, aborting\n");
+		    abort();
+		} else {
                     perror("accept()");
                     stop = true;
                 }
                 break;
             }
+
             if ((flags = fcntl(sfd, F_GETFL, 0)) < 0 ||
                 fcntl(sfd, F_SETFL, flags | O_NONBLOCK) < 0) {
                 perror("setting O_NONBLOCK");
                 close(sfd);
+		stop = true; 
                 break;
             }
+
+	    if (conn_inc_conns()){
+		//overflow
+		close(sfd);
+	    	stop = true; 
+	     	break;
+	    }
+
             dispatch_conn_new(sfd, conn_read, EV_READ | EV_PERSIST,
                                      DATA_BUFFER_SIZE, false);
+	    stop = true; 
             break;
 
         case conn_read:
@@ -1999,6 +2056,7 @@ static void drive_machine(conn *c) {
                 conn_cleanup(c);
             else
                 conn_close(c);
+	    
             stop = true;
             break;
         }
@@ -2706,10 +2764,10 @@ int main (int argc, char **argv) {
         fprintf(stderr, "failed to getrlimit number of files\n");
         exit(EXIT_FAILURE);
     } else {
-        int maxfiles = settings.maxconns;
-        if (rlim.rlim_cur < maxfiles)
-            rlim.rlim_cur = maxfiles + 3;
-        if (rlim.rlim_max < rlim.rlim_cur)
+        int maxfiles = settings.maxconns + 1024; // for internal bdb use
+        if (rlim.rlim_cur < maxfiles)   // soft limit
+            rlim.rlim_cur = maxfiles;
+        if (rlim.rlim_max < rlim.rlim_cur)  // hard limit
             rlim.rlim_max = rlim.rlim_cur;
         if (setrlimit(RLIMIT_NOFILE, &rlim) != 0) {
             fprintf(stderr, "failed to set rlimit for open files. Try running as root or requesting smaller maxconns value.\n");
