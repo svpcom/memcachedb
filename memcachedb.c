@@ -254,28 +254,49 @@ bool do_conn_add_to_freelist(conn *c) {
     return true;
 }
 
-void do_conn_inc_conns()
+bool do_conn_inc_conns()
 {
-    if (++curr_conns >= settings.maxconns)
+    if (curr_conns >= settings.maxconns)
+    {
+	//overflow -- should not be happen
+	if (settings.verbose > 0)
+	    fprintf(stderr, "Connections limit reached %d/%d, dropping conn\n", curr_conns, settings.maxconns);
+
+	//if accept is not disabled yet
+	accept_new_conns(false);
+	return true;
+    }
+    
+
+    curr_conns += 1;
+
+    if (curr_conns >= settings.maxconns)
     {
 	if (settings.verbose > 0)
-	    fprintf(stderr, "Connections limit reached, disabling accept\n");
+	    fprintf(stderr, "Connections limit reached %d/%d, disabling accept\n", curr_conns, settings.maxconns);
 	
 	accept_new_conns(false);
     }
+
+    return false;
 }
 
 void do_conn_dec_conns()
 {
     assert(curr_conns > 0);
 
-    if (--curr_conns < settings.maxconns)
+    curr_conns -= 1;
+    
+    if (curr_conns == (settings.maxconns - 1) && settings.verbose > 0)
     {
-	if (settings.verbose > 0 && curr_conns == (settings.maxconns - 1))
-	    fprintf(stderr, "Enabling accept\n");
+	    fprintf(stderr, "Enabling accept %d/%d\n", curr_conns, settings.maxconns);
 
-	accept_new_conns(true);
     }
+
+    // FIXME: accept_new_conns work ONLY from main thread
+    //        so we need to call it EVERY time to avoid deadlock with disabled accept on socket
+    accept_new_conns(true);
+    
 }
 
 conn *conn_new(const int sfd, const int init_state, const int event_flags,
@@ -1733,7 +1754,9 @@ void accept_new_conns(const bool do_accept) {
     conn *next;
 
     if (! is_listen_thread())
+    {
         return;
+    }
 
     for (next = listen_conn; next; next = next->next) {
         if (do_accept) {
@@ -1829,7 +1852,6 @@ static void drive_machine(conn *c) {
     assert(c != NULL);
 
     while (!stop) {
-
         switch(c->state) {
         case conn_listening:
             addrlen = sizeof(addr);
@@ -1848,17 +1870,24 @@ static void drive_machine(conn *c) {
                 break;
             }
 
-
             if ((flags = fcntl(sfd, F_GETFL, 0)) < 0 ||
                 fcntl(sfd, F_SETFL, flags | O_NONBLOCK) < 0) {
                 perror("setting O_NONBLOCK");
                 close(sfd);
+		stop = true; 
                 break;
             }
 
-	    conn_inc_conns();
+	    if (conn_inc_conns()){
+		//overflow
+		close(sfd);
+	    	stop = true; 
+	     	break;
+	    }
+
             dispatch_conn_new(sfd, conn_read, EV_READ | EV_PERSIST,
                                      DATA_BUFFER_SIZE, false);
+	    stop = true; 
             break;
 
         case conn_read:

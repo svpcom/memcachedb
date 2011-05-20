@@ -323,7 +323,7 @@ int item_put(char *key, size_t nkey, item *it);
 int item_delete(char *key, size_t nkey);
 int item_exists(char *key, size_t nkey);
 item *item_cget(DBC *cursorp, char *start, size_t nstart, u_int32_t flags);
-void  do_conn_inc_conns();
+bool  do_conn_inc_conns();
 void  do_conn_dec_conns();
 
 /* bdb related stats */
@@ -370,7 +370,7 @@ int mt_item_add_to_freelist(item *it);
 void  mt_stats_lock(void);
 void  mt_stats_unlock(void);
 int   mt_store_item(item *item, int comm);
-void   mt_conn_inc_conns();
+bool   mt_conn_inc_conns();
 void   mt_conn_dec_conns();
 
 # define conn_inc_conns()            mt_conn_inc_conns()

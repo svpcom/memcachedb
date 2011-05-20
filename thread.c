@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <assert.h>
 
 #ifdef HAVE_MALLOC_H
 #include <malloc.h>
@@ -242,10 +243,12 @@ conn *mt_conn_from_freelist() {
     return c;
 }
 
-void mt_conn_inc_conns() {
+bool mt_conn_inc_conns() {
+    bool rc;
     pthread_mutex_lock(&conn_lock);
-    do_conn_inc_conns();
+    rc = do_conn_inc_conns();
     pthread_mutex_unlock(&conn_lock);
+    return rc;
 }
 
 void mt_conn_dec_conns() {
